@@ -1,568 +1,408 @@
-from flask import Flask, render_template_string, request, jsonify
+import requests
+from bs4 import BeautifulSoup
+import time
+import random
+import sqlite3
+import re
 import os
+from urllib.parse import urljoin
 import logging
 
-# נסה לייבא את מנוע החיפוש
-try:
-    from semantic_search import AIToolsSemanticSearch
-    search_engine = AIToolsSemanticSearch()
-    SEARCH_AVAILABLE = True
-except Exception as e:
-    print(f"⚠️  מנוע חיפוש לא זמין: {e}")
-    SEARCH_AVAILABLE = False
-    search_engine = None
+# הגדרת לוגינג
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-app = Flask(__name__)
-
-# HTML Template
-HTML_TEMPLATE = '''
-<!DOCTYPE html>
-<html dir="rtl" lang="he">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🤖 חיפוש כלי AI - AIxploria Bot</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+class AIxploriaScraper:
+    def __init__(self):
+        self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        })
         
-        body {
-            font-family: 'Segoe UI', Arial, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh;
-            color: #333;
-        }
+        self.base_url = "https://www.aixploria.com"
+        self.scraped_tools = []
+        self.failed_urls = []
+        self.processed_urls = set()
         
-        .container {
-            max-width: 1000px;
-            margin: 0 auto;
-            padding: 20px;
-        }
+        # עמודים לגרידה
+        self.main_pages = [
+            "/en/ultimate-list-ai/",
+            "/en/free-ai/", 
+            "/en/top-100-ai/",
+            "/en/last-ai/",
+            "/en/category/ai-supertools/",
+            "/en/category/amazing/",
+            "/en/category/websites-ai/",
+            "/en/category/image-generation/",
+            "/en/category/video-generation/",
+            "/en/category/text-generation/",
+            "/en/category/code-generation/",
+            "/en/category/ai-agents/",
+            "/en/category/business/"
+        ]
         
-        .header {
-            text-align: center;
-            margin-bottom: 40px;
-            color: white;
-        }
-        
-        .header h1 {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
-        }
-        
-        .header p {
-            font-size: 1.2rem;
-            opacity: 0.9;
-        }
-        
-        .search-section {
-            background: white;
-            border-radius: 20px;
-            padding: 30px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
-            margin-bottom: 30px;
-        }
-        
-        .search-box {
-            display: flex;
-            gap: 15px;
-            margin-bottom: 20px;
-        }
-        
-        .search-input {
-            flex: 1;
-            padding: 15px 20px;
-            border: 2px solid #e0e0e0;
-            border-radius: 25px;
-            font-size: 1.1rem;
-            outline: none;
-            transition: all 0.3s ease;
-        }
-        
-        .search-input:focus {
-            border-color: #667eea;
-            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
-        }
-        
-        .search-btn {
-            padding: 15px 30px;
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white;
-            border: none;
-            border-radius: 25px;
-            font-size: 1.1rem;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.3s ease;
-        }
-        
-        .search-btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-        }
-        
-        .search-btn:disabled {
-            background: #ccc;
-            cursor: not-allowed;
-            transform: none;
-        }
-        
-        .quick-actions {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            justify-content: center;
-        }
-        
-        .quick-btn {
-            padding: 8px 16px;
-            background: #f8f9fa;
-            border: 1px solid #e0e0e0;
-            border-radius: 20px;
-            color: #666;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            font-size: 0.9rem;
-        }
-        
-        .quick-btn:hover {
-            background: #667eea;
-            color: white;
-            border-color: #667eea;
-        }
-        
-        .loading {
-            text-align: center;
-            color: #667eea;
-            font-size: 1.1rem;
-            margin: 20px 0;
-        }
-        
-        .results {
-            background: white;
-            border-radius: 15px;
-            overflow: hidden;
-            box-shadow: 0 5px 20px rgba(0,0,0,0.1);
-        }
-        
-        .result-item {
-            padding: 25px;
-            border-bottom: 1px solid #f0f0f0;
-            transition: all 0.3s ease;
-        }
-        
-        .result-item:hover {
-            background: #f8f9fa;
-            transform: translateX(-5px);
-        }
-        
-        .result-item:last-child {
-            border-bottom: none;
-        }
-        
-        .result-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: flex-start;
-            margin-bottom: 15px;
-        }
-        
-        .result-title {
-            font-size: 1.4rem;
-            font-weight: bold;
-            color: #333;
-            margin-bottom: 5px;
-        }
-        
-        .result-score {
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white;
-            padding: 5px 12px;
-            border-radius: 15px;
-            font-size: 0.9rem;
-            font-weight: bold;
-        }
-        
-        .result-meta {
-            display: flex;
-            gap: 15px;
-            margin-bottom: 15px;
-            flex-wrap: wrap;
-        }
-        
-        .meta-tag {
-            padding: 4px 12px;
-            background: #e3f2fd;
-            color: #1976d2;
-            border-radius: 12px;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
-        
-        .meta-tag.category {
-            background: #f3e5f5;
-            color: #7b1fa2;
-        }
-        
-        .meta-tag.pricing {
-            background: #e8f5e8;
-            color: #388e3c;
-        }
-        
-        .meta-tag.popularity {
-            background: #fff3e0;
-            color: #f57c00;
-        }
-        
-        .result-description {
-            color: #666;
-            line-height: 1.6;
-            margin-bottom: 15px;
-        }
-        
-        .result-link {
-            display: inline-block;
-            padding: 10px 20px;
-            background: linear-gradient(45deg, #667eea, #764ba2);
-            color: white;
-            text-decoration: none;
-            border-radius: 20px;
-            font-weight: bold;
-            transition: all 0.3s ease;
-        }
-        
-        .result-link:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
-            color: white;
-            text-decoration: none;
-        }
-        
-        .error {
-            background: #ffebee;
-            color: #c62828;
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-            margin: 20px 0;
-        }
-        
-        .stats {
-            background: rgba(255,255,255,0.1);
-            color: white;
-            padding: 15px;
-            border-radius: 10px;
-            text-align: center;
-            margin-bottom: 30px;
-        }
-        
-        @media (max-width: 768px) {
-            .container {
-                padding: 10px;
-            }
-            
-            .header h1 {
-                font-size: 2rem;
-            }
-            
-            .search-section {
-                padding: 20px;
-            }
-            
-            .search-box {
-                flex-direction: column;
-            }
-            
-            .result-header {
-                flex-direction: column;
-                gap: 10px;
-            }
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>🤖 בוט חיפוש כלי AI</h1>
-            <p>מנוע חיפוש חכם למציאת כלי AI מתוך מאגר AIxploria</p>
-        </div>
-        
-        {% if SEARCH_AVAILABLE %}
-        <div class="stats">
-            📊 המאגר מכיל {{ total_tools }} כלי AI איכותיים | 🔍 חיפוש סמנטי מתקדם
-        </div>
-        {% endif %}
-        
-        <div class="search-section">
-            {% if not SEARCH_AVAILABLE %}
-            <div class="error">
-                ❌ מנוע החיפוש לא זמין כרגע<br>
-                💡 ודא שקובץ ai_tools_full.db קיים וכולל נתונים
-            </div>
-            {% else %}
-            <div class="search-box">
-                <input 
-                    type="text" 
-                    id="searchInput" 
-                    class="search-input" 
-                    placeholder="תאר מה אתה מחפש... (למשל: 'כלי ליצירת וידאו', 'צ'אט בוט', 'עריכת תמונות')"
-                    value="{{ query or '' }}"
-                >
-                <button id="searchBtn" class="search-btn">🔍 חפש</button>
-            </div>
-            
-            <div class="quick-actions">
-                <div class="quick-btn" data-query="כלי ליצירת תמונות">🎨 יצירת תמונות</div>
-                <div class="quick-btn" data-query="צ'אט בוט AI">💬 צ'אט בוט</div>
-                <div class="quick-btn" data-query="עריכת וידאו">🎬 עריכת וידאו</div>
-                <div class="quick-btn" data-query="יצירת לוגו">🏷️ יצירת לוגו</div>
-                <div class="quick-btn" data-query="תרגום שפות">🌐 תרגום</div>
-                <div class="quick-btn" data-query="כתיבת קוד">💻 כתיבת קוד</div>
-                <div class="quick-btn" data-query="כלים חינמיים">💰 חינמי</div>
-                <div class="quick-btn" data-action="popular">⭐ פופולריים</div>
-                <div class="quick-btn" data-action="random">🎲 אקראי</div>
-            </div>
-            {% endif %}
-        </div>
-        
-        <div id="loading" class="loading" style="display: none;">
-            🔄 מחפש כלים רלוונטיים...
-        </div>
-        
-        <div id="results"></div>
-        
-        {% if results %}
-        <div class="results">
-            {% for tool in results %}
-            <div class="result-item">
-                <div class="result-header">
-                    <div>
-                        <div class="result-title">{{ tool.name }}</div>
-                    </div>
-                    {% if tool.final_score %}
-                    <div class="result-score">{{ "%.0f"|format(tool.final_score * 100) }}%</div>
-                    {% endif %}
-                </div>
-                
-                <div class="result-meta">
-                    {% if tool.category %}
-                    <span class="meta-tag category">📂 {{ tool.category }}</span>
-                    {% endif %}
-                    
-                    {% if tool.pricing %}
-                    <span class="meta-tag pricing">
-                        {% if tool.pricing == 'free' %}💚 חינמי
-                        {% elif tool.pricing == 'freemium' %}💛 פרימיום חלקי
-                        {% elif tool.pricing == 'paid' %}💳 בתשלום
-                        {% else %}💰 {{ tool.pricing }}
-                        {% endif %}
-                    </span>
-                    {% endif %}
-                    
-                    {% if tool.popularity %}
-                    <span class="meta-tag popularity">👁️ {{ tool.popularity }} צפיות</span>
-                    {% endif %}
-                </div>
-                
-                <div class="result-description">
-                    {{ tool.description[:200] }}{% if tool.description|length > 200 %}...{% endif %}
-                </div>
-                
-                <a href="{{ tool.url }}" target="_blank" class="result-link">
-                    🔗 לכלי באתר AIxploria
-                </a>
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-    </div>
+        self.init_database()
     
-    <script>
-        const searchInput = document.getElementById('searchInput');
-        const searchBtn = document.getElementById('searchBtn');
-        const resultsDiv = document.getElementById('results');
-        const loadingDiv = document.getElementById('loading');
+    def init_database(self):
+        """יצירת מסד נתונים"""
+        self.conn = sqlite3.connect('ai_tools_full.db')
+        self.cursor = self.conn.cursor()
         
-        function performSearch(query, action = null) {
-            if (!query.trim() && !action) return;
-            
-            loadingDiv.style.display = 'block';
-            resultsDiv.innerHTML = '';
-            searchBtn.disabled = true;
-            searchBtn.textContent = '🔄 מחפש...';
-            
-            const params = new URLSearchParams();
-            if (action) {
-                params.append('action', action);
-            } else {
-                params.append('q', query);
-            }
-            
-            fetch('/search?' + params.toString())
-                .then(response => response.json())
-                .then(data => {
-                    loadingDiv.style.display = 'none';
-                    searchBtn.disabled = false;
-                    searchBtn.textContent = '🔍 חפש';
-                    
-                    if (data.results && data.results.length > 0) {
-                        displayResults(data.results);
-                    } else {
-                        resultsDiv.innerHTML = '<div class="error">🤷‍♂️ לא נמצאו תוצאות. נסה חיפוש אחר.</div>';
-                    }
-                })
-                .catch(error => {
-                    loadingDiv.style.display = 'none';
-                    searchBtn.disabled = false;
-                    searchBtn.textContent = '🔍 חפש';
-                    resultsDiv.innerHTML = '<div class="error">❌ שגיאה בחיפוש: ' + error.message + '</div>';
-                });
-        }
+        self.cursor.execute('''
+            CREATE TABLE IF NOT EXISTS ai_tools (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                url TEXT UNIQUE,
+                description TEXT,
+                category TEXT,
+                popularity TEXT,
+                pricing TEXT,
+                tags TEXT,
+                scraped_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         
-        function displayResults(results) {
-            const resultsHTML = results.map(tool => `
-                <div class="result-item">
-                    <div class="result-header">
-                        <div>
-                            <div class="result-title">${tool.name}</div>
-                        </div>
-                        ${tool.final_score ? `<div class="result-score">${Math.round(tool.final_score * 100)}%</div>` : ''}
-                    </div>
-                    
-                    <div class="result-meta">
-                        ${tool.category ? `<span class="meta-tag category">📂 ${tool.category}</span>` : ''}
-                        
-                        ${tool.pricing ? `<span class="meta-tag pricing">
-                            ${tool.pricing === 'free' ? '💚 חינמי' : 
-                              tool.pricing === 'freemium' ? '💛 פרימיום חלקי' : 
-                              tool.pricing === 'paid' ? '💳 בתשלום' : 
-                              '💰 ' + tool.pricing}
-                        </span>` : ''}
-                        
-                        ${tool.popularity ? `<span class="meta-tag popularity">👁️ ${tool.popularity} צפיות</span>` : ''}
-                    </div>
-                    
-                    <div class="result-description">
-                        ${tool.description.length > 200 ? tool.description.substring(0, 200) + '...' : tool.description}
-                    </div>
-                    
-                    <a href="${tool.url}" target="_blank" class="result-link">
-                        🔗 לכלי באתר AIxploria
-                    </a>
-                </div>
-            `).join('');
-            
-            resultsDiv.innerHTML = `<div class="results">${resultsHTML}</div>`;
-        }
-        
-        // אירועים
-        searchBtn.addEventListener('click', () => {
-            performSearch(searchInput.value);
-        });
-        
-        searchInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                performSearch(searchInput.value);
-            }
-        });
-        
-        // לחצני חיפוש מהיר
-        document.querySelectorAll('.quick-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const query = btn.getAttribute('data-query');
-                const action = btn.getAttribute('data-action');
-                
-                if (query) {
-                    searchInput.value = query;
-                    performSearch(query);
-                } else if (action) {
-                    performSearch('', action);
-                }
-            });
-        });
-        
-        // חיפוש ראשוני אם יש query
-        {% if query %}
-        performSearch('{{ query }}');
-        {% endif %}
-    </script>
-</body>
-</html>
-'''
-
-@app.route('/')
-def index():
-    """עמוד בית"""
-    query = request.args.get('q', '')
-    results = []
-    total_tools = 0
+        self.cursor.execute('CREATE INDEX IF NOT EXISTS idx_name ON ai_tools(name)')
+        self.conn.commit()
+        logger.info("✅ מסד נתונים נוצר")
     
-    if SEARCH_AVAILABLE:
-        total_tools = len(search_engine.tools_data)
+    def delay(self):
+        """עיכוב קצר"""
+        time.sleep(random.uniform(0.5, 1.5))
+    
+    def get_page(self, url):
+        """שליפת עמוד"""
+        try:
+            response = self.session.get(url, timeout=10)
+            response.raise_for_status()
+            self.delay()
+            return response.text
+        except Exception as e:
+            logger.error(f"שגיאה בשליפת {url}: {e}")
+            self.failed_urls.append(url)
+            return None
+    
+    def find_tool_links(self, html_content):
+        """חיפוש קישורי כלים"""
+        soup = BeautifulSoup(html_content, 'html.parser')
+        tool_links = []
         
-        # אם יש שאלה, בצע חיפוש
-        if query:
+        links = soup.find_all('a', href=True)
+        
+        for link in links:
+            href = link.get('href')
+            if not href:
+                continue
+                
+            # המרה לURL מלא
+            if href.startswith('/'):
+                href = urljoin(self.base_url, href)
+            
+            # בדיקות בסיסיות
+            if not href.startswith('https://www.aixploria.com/en/'):
+                continue
+                
+            # דלג על עמודים שאינם כלים
+            skip_patterns = [
+                '/add-ai/', '/news/', '/blog/', '/about/', '/contact/',
+                '/privacy/', '/terms/', '/sitemap/', '/login/', '/register/'
+            ]
+            
+            if any(pattern in href for pattern in skip_patterns):
+                continue
+            
+            # דלג על עמודי קטגוריות ראשיים
+            if href.endswith('/category/') or href.endswith('/tag/'):
+                continue
+                
+            # הוסף לרשימת כלים
+            tool_links.append(href)
+        
+        return list(set(tool_links))  # הסר כפולים
+    
+    def extract_tool_data(self, html_content, url):
+        """חילוץ נתוני כלי"""
+        soup = BeautifulSoup(html_content, 'html.parser')
+        
+        try:
+            # שם הכלי
+            title = soup.find('h1') or soup.find('title')
+            if not title:
+                return None
+                
+            name = title.get_text().strip()
+            name = re.sub(r'\s*\|\s*.*$', '', name)  # נקה מטקסט אחרי |
+            name = name[:100].strip()
+            
+            if not name:
+                return None
+            
+            # תיאור
+            description = ""
+            
+            # חפש בכמה מקומות
+            desc_areas = [
+                soup.select('div.entry-content p'),
+                soup.select('div.description p'),
+                soup.select('main p'),
+                soup.select('article p')
+            ]
+            
+            for area in desc_areas:
+                for p in area:
+                    text = p.get_text().strip()
+                    if text and len(text) > 30:
+                        description += text + " "
+                        if len(description) > 200:
+                            break
+                if len(description) > 200:
+                    break
+            
+            # נקה תיאור
+            description = re.sub(r'\s+', ' ', description.strip())
+            description = description[:800]
+            
+            # **תנאי איכות - לא לשנות!**
+            if len(description) < 100:
+                logger.debug(f"🚫 תיאור קצר: {name} ({len(description)} תווים)")
+                return None
+            
+            # פופולריות
+            popularity = ""
+            pop_match = re.search(r'\(\+(\d+)\)', str(soup))
+            if pop_match:
+                popularity = f"+{pop_match.group(1)}"
+            
+            # קטגוריה
+            category = ""
+            cat_link = soup.find('a', href=re.compile(r'/category/'))
+            if cat_link:
+                category = cat_link.get_text().strip()
+            
+            # מחיר
+            pricing = ""
+            text_lower = str(soup).lower()
+            if 'free' in text_lower and 'trial' not in text_lower:
+                pricing = "free"
+            elif 'freemium' in text_lower or 'free trial' in text_lower:
+                pricing = "freemium"
+            elif 'paid' in text_lower or 'subscription' in text_lower:
+                pricing = "paid"
+            
+            # תגיות
+            tags = []
+            tag_links = soup.find_all('a', href=re.compile(r'/tag/'))
+            for tag_link in tag_links[:5]:  # מקסימום 5
+                tag = tag_link.get_text().strip()
+                if tag:
+                    tags.append(tag)
+            
+            tool_data = {
+                'name': name,
+                'url': url,
+                'description': description,
+                'category': category,
+                'popularity': popularity,
+                'pricing': pricing,
+                'tags': ', '.join(tags)
+            }
+            
+            logger.info(f"✅ כלי נמצא: {name} ({len(description)} תווים)")
+            return tool_data
+            
+        except Exception as e:
+            logger.error(f"שגיאה בחילוץ מ-{url}: {e}")
+            return None
+    
+    def save_tool(self, tool_data):
+        """שמירת כלי במסד נתונים"""
+        try:
+            self.cursor.execute('''
+                INSERT OR REPLACE INTO ai_tools 
+                (name, url, description, category, popularity, pricing, tags)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                tool_data['name'],
+                tool_data['url'],
+                tool_data['description'],
+                tool_data['category'],
+                tool_data['popularity'],
+                tool_data['pricing'],
+                tool_data['tags']
+            ))
+            self.conn.commit()
+            
+        except Exception as e:
+            logger.error(f"שגיאה בשמירה: {e}")
+    
+    def scrape_page(self, page_path):
+        """גרידת עמוד בודד"""
+        url = self.base_url + page_path
+        logger.info(f"🔍 גורד עמוד: {page_path}")
+        
+        html = self.get_page(url)
+        if not html:
+            return []
+        
+        tool_links = self.find_tool_links(html)
+        logger.info(f"   נמצאו {len(tool_links)} קישורים")
+        
+        # בדוק גם pagination
+        soup = BeautifulSoup(html, 'html.parser')
+        next_links = soup.find_all('a', href=re.compile(r'/page/\d+'))
+        
+        for next_link in next_links[:5]:  # מקסימום 5 עמודים
+            next_url = urljoin(url, next_link.get('href'))
+            if next_url not in self.processed_urls:
+                self.processed_urls.add(next_url)
+                next_html = self.get_page(next_url)
+                if next_html:
+                    more_links = self.find_tool_links(next_html)
+                    tool_links.extend(more_links)
+        
+        return tool_links
+    
+    def scrape_all(self):
+        """גרידת כל האתר"""
+        logger.info("🚀 מתחיל גרידה מלאה")
+        
+        all_tool_links = []
+        
+        # גרוד כל עמוד
+        for page_path in self.main_pages:
             try:
-                results = search_engine.search(query, top_k=10)
+                page_links = self.scrape_page(page_path)
+                all_tool_links.extend(page_links)
             except Exception as e:
-                print(f"שגיאה בחיפוש: {e}")
+                logger.error(f"שגיאה בעמוד {page_path}: {e}")
+                continue
+        
+        # הסר כפולים
+        unique_links = list(set(all_tool_links))
+        logger.info(f"📊 סך הכל קישורים ייחודיים: {len(unique_links)}")
+        
+        if len(unique_links) < 1000:
+            logger.warning(f"⚠️ מספר קישורים נמוך: {len(unique_links)}")
+        
+        # גרוד כל כלי
+        saved_count = 0
+        filtered_count = 0
+        
+        for i, tool_url in enumerate(unique_links, 1):
+            if i % 50 == 0:
+                logger.info(f"📈 התקדמות: {i}/{len(unique_links)} ({saved_count} נשמרו)")
+            
+            if tool_url in self.processed_urls:
+                continue
+                
+            self.processed_urls.add(tool_url)
+            
+            html = self.get_page(tool_url)
+            if not html:
+                continue
+            
+            tool_data = self.extract_tool_data(html, tool_url)
+            if tool_data:
+                self.save_tool(tool_data)
+                self.scraped_tools.append(tool_data)
+                saved_count += 1
+            else:
+                filtered_count += 1
+        
+        logger.info(f"🎉 גרידה הושלמה!")
+        logger.info(f"✅ נשמרו: {saved_count} כלים")
+        logger.info(f"🚫 נפסלו: {filtered_count} כלים")
+        logger.info(f"❌ נכשלו: {len(self.failed_urls)} כלים")
+        
+        return self.scraped_tools
     
-    return render_template_string(HTML_TEMPLATE, 
-                                query=query, 
-                                results=results,
-                                total_tools=total_tools,
-                                SEARCH_AVAILABLE=SEARCH_AVAILABLE)
+    def get_stats(self):
+        """סטטיסטיקות"""
+        self.cursor.execute('SELECT COUNT(*) FROM ai_tools')
+        total = self.cursor.fetchone()[0]
+        
+        self.cursor.execute('SELECT category, COUNT(*) FROM ai_tools WHERE category != "" GROUP BY category ORDER BY COUNT(*) DESC')
+        categories = self.cursor.fetchall()
+        
+        self.cursor.execute('SELECT pricing, COUNT(*) FROM ai_tools WHERE pricing != "" GROUP BY pricing')
+        pricing = self.cursor.fetchall()
+        
+        return {
+            'total': total,
+            'categories': categories,
+            'pricing': pricing,
+            'failed': len(self.failed_urls)
+        }
+    
+    def close(self):
+        """סגירה"""
+        if self.conn:
+            self.conn.close()
 
-@app.route('/search')
-def search_api():
-    """API לחיפוש"""
-    if not SEARCH_AVAILABLE:
-        return jsonify({'error': 'מנוע חיפוש לא זמין'}), 500
+# הפעלה
+if __name__ == "__main__":
+    print("🚀 מתחיל גרידת AIxploria")
+    print("⏱️  צפוי זמן: 30-60 דקות")
+    print("💡 לעצירה: Ctrl+C")
     
-    query = request.args.get('q', '')
-    action = request.args.get('action', '')
+    # מחק קובץ ישן
+    if os.path.exists('ai_tools_full.db'):
+        os.remove('ai_tools_full.db')
+        print("🗑️  קובץ ישן נמחק")
+    
+    scraper = AIxploriaScraper()
     
     try:
-        if action == 'popular':
-            results = search_engine.get_popular_tools(20)
-        elif action == 'random':
-            results = search_engine.get_random_tools(10)
-        elif query:
-            results = search_engine.search(query, top_k=15)
+        start_time = time.time()
+        
+        # גרידה
+        tools = scraper.scrape_all()
+        
+        # סטטיסטיקות
+        stats = scraper.get_stats()
+        
+        duration = (time.time() - start_time) / 60
+        
+        print(f"\n📊 תוצאות:")
+        print(f"⏱️  זמן: {duration:.1f} דקות")
+        print(f"🎯 כלים נשמרו: {stats['total']}")
+        print(f"❌ כלים נכשלו: {stats['failed']}")
+        
+        if stats['total'] > 2000:
+            print("🎉 מצוין! גרידה מוצלחת")
+        elif stats['total'] > 1000:
+            print("👍 טוב! גרידה סבירה")
         else:
-            results = search_engine.get_random_tools(10)
+            print("⚠️ נמוך מהצפוי")
         
-        return jsonify({'results': results})
+        print(f"\n📂 קטגוריות:")
+        for cat, count in stats['categories'][:8]:
+            print(f"  • {cat}: {count}")
+        
+        print(f"\n💰 מחירים:")
+        for price, count in stats['pricing']:
+            print(f"  • {price}: {count}")
+        
+        # בדיקת קובץ
+        if os.path.exists('ai_tools_full.db'):
+            size = os.path.getsize('ai_tools_full.db') / 1024
+            print(f"\n💾 קובץ: ai_tools_full.db ({size:.1f} KB)")
+            
+            if size > 1000:
+                print("✅ גודל מצוין")
+            elif size > 500:
+                print("✅ גודל טוב")
+            else:
+                print("⚠️ גודל קטן")
+        
+    except KeyboardInterrupt:
+        print(f"\n⏹️ הופסק על ידי משתמש")
+        stats = scraper.get_stats()
+        print(f"📊 עד כה: {stats['total']} כלים")
         
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/categories')
-def categories_api():
-    """API לקטגוריות"""
-    if not SEARCH_AVAILABLE:
-        return jsonify({'error': 'מנוע חיפוש לא זמין'}), 500
-    
-    try:
-        categories = search_engine.get_categories()
-        return jsonify({'categories': categories})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500
-
-@app.route('/health')
-def health():
-    """בדיקת תקינות"""
-    status = {
-        'status': 'healthy' if SEARCH_AVAILABLE else 'limited',
-        'search_available': SEARCH_AVAILABLE,
-        'tools_count': len(search_engine.tools_data) if SEARCH_AVAILABLE else 0
-    }
-    return jsonify(status)
-
-if __name__ == '__main__':
-    port = int(os.environ.get('PORT', 5000))
-    app.run(host='0.0.0.0', port=port, debug=False)
+        print(f"\n❌ שגיאה: {e}")
+        
+    finally:
+        scraper.close()
+        print("✅ סיום")
