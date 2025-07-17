@@ -1,11 +1,25 @@
+# Added Streamlit for caching the search engine resource
 from flask import Flask, render_template_string, request, jsonify
 import os
 import logging
+import streamlit as st
 
 # נסה לייבא את מנוע החיפוש
 try:
-    from semantic_search import AIToolsSemanticSearch
-    search_engine = AIToolsSemanticSearch()
+    # Alias for clarity with the cached loader below
+    from semantic_search import AIToolsSemanticSearch as SearchEngine
+
+    # Use Streamlit caching so the engine is constructed only once per session
+    @st.cache_resource
+    def get_search_engine():
+        print("Attempting to load search engine...")
+        engine = SearchEngine()
+        print("Search engine loaded successfully!")
+        return engine
+
+    # Load the search engine using the cached function
+    search_engine = get_search_engine()
+
     SEARCH_AVAILABLE = True
 except Exception as e:
     print(f"⚠️  מנוע חיפוש לא זמין: {e}")
