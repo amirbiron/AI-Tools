@@ -253,14 +253,17 @@ class AIToolsSemanticSearch:
         import random
         
         if count >= len(self.tools_data):
-            tools = self.tools_data.copy()
+            base_tools = self.tools_data
         else:
-            tools = random.sample(self.tools_data, count)
-        
-        for i, tool in enumerate(tools):
-            tool['rank'] = i + 1
-            tool['relevance_score'] = 1.0
-            tool['final_score'] = 1.0
+            base_tools = random.sample(self.tools_data, count)
+
+        tools = []
+        for i, tool in enumerate(base_tools):
+            tool_copy = tool.copy()
+            tool_copy['rank'] = i + 1
+            tool_copy['relevance_score'] = 1.0
+            tool_copy['final_score'] = 1.0
+            tools.append(tool_copy)
         
         return tools
     
