@@ -11,5 +11,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all application files
 COPY . .
 
-# Set the command to run the app, exposing the correct port and address
-CMD ["streamlit", "run", "app.py", "--server.port=7860", "--server.address=0.0.0.0"]
+# Default port; Render sets $PORT automatically for web services
+ENV PORT=7860
+
+# Run the Flask application using Gunicorn
+CMD ["sh", "-c", "gunicorn -w 2 -b 0.0.0.0:${PORT} app:app"]
