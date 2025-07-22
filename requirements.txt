@@ -8,6 +8,4 @@ faiss-cpu
 
 scikit-learn
 pytest
-requests
-beautifulsoup4
-gunicorn
+
