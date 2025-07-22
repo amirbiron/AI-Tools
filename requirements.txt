@@ -5,3 +5,9 @@ numpy
 flask
 sentence-transformers
 faiss-cpu
+
+scikit-learn
+pytest
+requests
+beautifulsoup4
+gunicorn
