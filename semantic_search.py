@@ -60,7 +60,10 @@ class AIToolsSemanticSearch:
                 self.tools_data.append(tool)
             
             conn.close()
-            
+
+        except sqlite3.DatabaseError as e:
+            logger.error(f"Database error loading data: {e}")
+            raise
         except Exception as e:
             logger.error(f"שגיאה בטעינת נתונים: {e}")
             # ניסיון עם נתונים דמה אם מסד הנתונים לא זמין

@@ -4,6 +4,9 @@ import os
 import logging
 import streamlit as st
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # נסה לייבא את מנוע החיפוש
 try:
     # Alias for clarity with the cached loader below
@@ -12,9 +15,9 @@ try:
     # Use Streamlit caching so the engine is constructed only once per session
     @st.cache_resource
     def get_search_engine():
-        print("Attempting to load search engine...")
+        logger.info("Attempting to load search engine...")
         engine = SearchEngine()
-        print("Search engine loaded successfully!")
+        logger.info("Search engine loaded successfully!")
         return engine
 
     # Load the search engine using the cached function
@@ -22,7 +25,7 @@ try:
 
     SEARCH_AVAILABLE = True
 except Exception as e:
-    print(f"⚠️  מנוע חיפוש לא זמין: {e}")
+    logger.exception(f"Search engine unavailable: {e}")
     SEARCH_AVAILABLE = False
     search_engine = None
 
